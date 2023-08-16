@@ -9,8 +9,8 @@ Convert image or video to image made of minecraft blocks
 To find help with program type `py main.py --help`
 
 ## Supported formats
-Images: .png and other formats support by **Python OpenCV**. Output always .png
-Videos: .gif, .mp4. Output fromat can be changed with option to any other format supported by FFMpeg (No)
+* Images: .png and other formats support by **Python OpenCV**. Output always .png
+* Videos: .gif, .mp4. Output fromat can be changed with option to any other format supported by FFMpeg (No)
 
 ## Examples
 <img src="example.png" alt="Input png" style="height: 60%; width:60%;"/>
