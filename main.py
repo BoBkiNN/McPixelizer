@@ -283,7 +283,7 @@ def blockize_video(path: str = "input.mp4", block_size: tuple[int, int] = (70, 5
         bar.close()
     frame_bars.clear()
     # print("")
-    out_name = ".".join(path.split(".")[:-1])+"_output."+output_ext
+    out_name = ".".join(path.split(".")[:-1])+f"_{block_size[0]}x{block_size[1]}_output."+output_ext
     make_video(result_fps, block_size, output_name=out_name)
 
 thread_count = 5
