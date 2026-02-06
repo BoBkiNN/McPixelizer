@@ -158,7 +158,7 @@ def make_video(fps: float, block_size: tuple[int, int], use_ffmpeg = True, outpu
 def blockize_image(path: str = "input.png", block_size: tuple[int, int] = (70, 50)):
     img: np.ndarray = cv2.imread(path)
     print(f"Processing image \"{path}\"; Size: {img.shape[0]}x{img.shape[1]} ({block_size[0]}x{block_size[1]} blocks)")
-    out_name = ".".join(path.split(".")[:-1])+"_output.png"
+    out_name = ".".join(path.split(".")[:-1])+f"_{block_size[0]}x{block_size[1]}_output.png"
     textures = preload_sorted()
     process_frame(textures, img, -1, block_size, out_name)
 
