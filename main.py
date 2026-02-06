@@ -361,10 +361,6 @@ def main():
         parser.print_help()
         return
     savecache()
-    print(f"{type(next(iter(colorcache.values())))} {type(next(iter(colorcache.values()))[0])}")
-
-
-
 
 if __name__ == "__main__":
     main()
