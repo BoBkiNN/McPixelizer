@@ -53,7 +53,7 @@ def load_textures():
     for texture_file in files:
         bar.update()
         # setbarp(texture_file.split('.')[0])
-        texture = cv2.imread(os.path.join(texture_path, texture_file))
+        texture = cv2.imread(os.path.join("sorted", texture_file))
         avg_color: np.ndarray = np.mean(texture, axis=(0, 1)) # blue green red
         rgb = (int(avg_color[2]), int(avg_color[1]), int(avg_color[0]))
         bgr = (rgb[2], rgb[1], rgb[0])
@@ -123,7 +123,7 @@ def process_frame(sorted_textures: dict[str, np.ndarray],
                 colorcache[tpixel] = nearest_col
             # ret[y, x] = nearest_col
             texture = color_map[nearest_col]
-            block: np.ndarray = sort_textures[texture] # 16 16 3
+            block: np.ndarray = sorted_textures[texture] # 16 16 3
             blocked[y*16:y*16 + 16, x*16:x*16 + 16] = block
             bar.update()
     # cv2.imwrite("res"+os.sep+f"f_{index}.png", ret)
