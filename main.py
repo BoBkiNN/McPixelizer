@@ -16,11 +16,10 @@ def create_bar(name: str, max: int):
 texture_path = 'textures'
 color_map = {}
 
-files = os.listdir(texture_path)
-
 p_endings = ["_top.png", "_bottom.png"]
 
 def sort_textures():
+    files = os.listdir(texture_path)
     if not os.path.exists("sorted"):
         os.mkdir("sorted")
     def has_full_alpha(img):
@@ -92,7 +91,19 @@ def toIntTuple(nptuple):
 colorcache: dict[tuple[int, int, int], tuple[int, int, int]] = {}
 frame_bars: list[tqdm] = []
 
-def process_frame(image: np.ndarray, index: int = 0, block_size: tuple[int, int] = (70, 50), output_name: str = None):
+def preload_sorted():
+    ret: dict[str, np.ndarray] = {}
+    ls = os.listdir("sorted")
+    for t in ls:
+        img = cv2.imread("sorted"+os.sep+t)
+        ret[t] = img
+    return ret
+
+
+def process_frame(sorted_textures: dict[str, np.ndarray], 
+                  image: np.ndarray, index: int = 0,
+                  block_size: tuple[int, int] = (70, 50), 
+                  output_name: str = None):
     # Resize frame
     resized_frame = cv2.resize(image, block_size)
     # print(f"{len(resized_frame)}, {len(resized_frame[0])}")
@@ -112,7 +123,7 @@ def process_frame(image: np.ndarray, index: int = 0, block_size: tuple[int, int]
                 colorcache[tpixel] = nearest_col
             # ret[y, x] = nearest_col
             texture = color_map[nearest_col]
-            block: np.ndarray = cv2.imread("sorted"+os.sep+texture) # 16 16 3
+            block: np.ndarray = sort_textures[texture] # 16 16 3
             blocked[y*16:y*16 + 16, x*16:x*16 + 16] = block
             bar.update()
     # cv2.imwrite("res"+os.sep+f"f_{index}.png", ret)
@@ -148,7 +159,8 @@ def blockize_image(path: str = "input.png", block_size: tuple[int, int] = (70, 5
     img: np.ndarray = cv2.imread(path)
     print(f"Processing image \"{path}\"; Size: {img.shape[0]}x{img.shape[1]} ({block_size[0]}x{block_size[1]} blocks)")
     out_name = ".".join(path.split(".")[:-1])+"_output.png"
-    process_frame(img, -1, block_size, out_name)
+    textures = preload_sorted()
+    process_frame(textures, img, -1, block_size, out_name)
 
 class FrameRange:
     def __init__(self, f:int = 0, t:int = -1) -> None:
@@ -234,6 +246,7 @@ def blockize_video(path: str = "input.mp4", block_size: tuple[int, int] = (70, 5
     else:
         result_fps = (result_frame_count * fps) / frame_count
     print(f"Processing video \"{path}\"; FPS {result_fps}; Total frames: {int(result_frame_count)}|{int(frame_count)}")
+    sorted_textures = preload_sorted()
     threads: list[threading.Thread] = []
     index = 0
     while cap.isOpened():
@@ -256,7 +269,7 @@ def blockize_video(path: str = "input.mp4", block_size: tuple[int, int] = (70, 5
             for bar in frame_bars:
                 bar.close()
             frame_bars.clear()
-        t = threading.Thread(name=f"Frame {index}", target=process_frame, args=(frame, index, block_size))
+        t = threading.Thread(name=f"Frame {index}", target=process_frame, args=(sorted_textures, frame, index, block_size))
         t.start()
         threads.append(t)
         # process_frame(frame, index, block_size)
