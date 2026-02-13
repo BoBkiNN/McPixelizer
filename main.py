@@ -1,4 +1,5 @@
-import argparse
+import click
+from pathlib import Path
 import os
 import shutil
 import subprocess
@@ -9,6 +10,7 @@ import cv2
 import numpy as np
 # from nbtlib import *
 from tqdm import tqdm
+from dataclasses import dataclass
 
 def create_bar(name: str, max: int, position: int | None = None):
     return tqdm(total=max, ncols=100, 
@@ -101,11 +103,20 @@ def preload_sorted():
         ret[t] = img
     return ret
 
+@dataclass
+class Context:
+    results_folder: Path
+    block_size: tuple[int, int]
+
+    @property
+    def frames_folder(self):
+        return self.results_folder / "frames"
+
 
 def process_frame(sorted_textures: dict[str, np.ndarray], 
-                  image: np.ndarray, index: int = 0,
-                  block_size: tuple[int, int] = (70, 50), 
-                  output_name: str = None, bar_position: int | None = None):
+                  image: np.ndarray, ctx: Context, index: int = 0,
+                  output: Path | None = None, bar_position: int | None = None):
+    block_size = ctx.block_size
     # Resize frame
     resized_frame = cv2.resize(image, block_size)
     # print(f"{len(resized_frame)}, {len(resized_frame[0])}")
@@ -129,40 +140,48 @@ def process_frame(sorted_textures: dict[str, np.ndarray],
             blocked[y*16:y*16 + 16, x*16:x*16 + 16] = block
             bar.update()
     # cv2.imwrite("res"+os.sep+f"f_{index}.png", ret)
-    if output_name is None:
-        cv2.imwrite("res"+os.sep+f"{index}.png", blocked)
+    if output is None:
+        rp = ctx.frames_folder / f"{index}.png"
+        ctx.frames_folder.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(rp), blocked)
     else:
-        cv2.imwrite("res"+os.sep+output_name, blocked)
+        rp = ctx.results_folder / output.name
+        cv2.imwrite(str(rp), blocked)
+    bar.close()
     # save_blocked(index, processed_frame)
 
 
 
-def make_video(fps: float, block_size: tuple[int, int], use_ffmpeg = True, output_name: str = "output.avi"):
+def make_video(fps: float, ctx: Context, output: Path, use_ffmpeg = True):
     if use_ffmpeg:
-        path = "res"+os.sep+output_name
-        subprocess.run(["ffmpeg", "-framerate", str(fps), "-i", "res"+os.sep+"%d.png", path], stdout=subprocess.DEVNULL)
-        print("Created using FFMPEG "+output_name.split(".")[-1].upper()+" video: "+path)
+        i = ctx.frames_folder / "%d.png"
+        subprocess.run(["ffmpeg", "-framerate", str(fps), "-i", str(i), str(output)], stdout=subprocess.DEVNULL)
+        print("Created using FFMPEG "+output.suffix.upper()+" video: "+output)
         return
-    size = tuple(element * 16 for element in block_size)
+    size = tuple(element * 16 for element in ctx.block_size)
     writer = cv2.VideoWriter('output.avi', cv2.VideoWriter_fourcc(*'XVID'),fps, tuple(reversed(size)))
     frames = []
-    for frame_file in sorted(os.listdir("res")):
+    frame_files = os.listdir(ctx.frames_folder)
+    for frame_file in sorted(frame_files):
         if frame_file.endswith('.png'):
             frames.append(frame_file)
     bar = create_bar(f'Making video', len(frames))
-    for frame in frames:
-        frame_path = os.path.join("res", frame)
+    for frame_file in frames:
+        frame_path = str(ctx.frames_folder) / frame_file
         frame = cv2.imread(frame_path)
         writer.write(frame)
         bar.update()
     writer.release()
+    bar.close()
 
-def blockize_image(path: str = "input.png", block_size: tuple[int, int] = (70, 50)):
-    img: np.ndarray = cv2.imread(path)
-    print(f"Processing image \"{path}\"; Size: {img.shape[0]}x{img.shape[1]} ({block_size[0]}x{block_size[1]} blocks)")
-    out_name = ".".join(path.split(".")[:-1])+f"_{block_size[0]}x{block_size[1]}_output.png"
+def blockize_image(ctx: Context, input_file: Path = Path("input.png")):
+    block_size = ctx.block_size
+    img: np.ndarray = cv2.imread(str(input_file))
+    print(f"Processing image \"{input_file}\"; Size: {img.shape[0]}x{img.shape[1]} ({block_size[0]}x{block_size[1]} blocks)")
+    out_name = input_file.stem+f"_{block_size[0]}x{block_size[1]}_output.png"
+    out_path = ctx.results_folder / out_name
     textures = preload_sorted()
-    process_frame(textures, img, -1, block_size, out_name)
+    process_frame(textures, img, ctx, -1, out_path)
 
 class FrameRange:
     def __init__(self, f:int = 0, t:int = -1) -> None:
@@ -236,10 +255,9 @@ def writedebug(text: str):
     with open("debug.txt", "a") as f:
         f.write(text+"\n")
 
-def blockize_video(path: str = "input.mp4", block_size: tuple[int, int] = (70, 50), frame_range = FrameRange(), output_ext: str = "avi"):
+def blockize_video(video_path: Path, ctx: Context, frame_range = FrameRange(), output_ext: str = "avi"):
     # Load video and extract frames
-    video_path = path
-    cap = cv2.VideoCapture(video_path)
+    cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
     result_frame_count = frame_range.size(frame_count-1)
@@ -247,7 +265,7 @@ def blockize_video(path: str = "input.mp4", block_size: tuple[int, int] = (70, 5
         result_fps = fps
     else:
         result_fps = (result_frame_count * fps) / frame_count
-    print(f"Processing video \"{path}\"; FPS {result_fps}; Total frames: {int(result_frame_count)}|{int(frame_count)}")
+    print(f"Processing video \"{video_path}\"; FPS {result_fps}; Total frames: {int(result_frame_count)}|{int(frame_count)}")
     sorted_textures = preload_sorted()
 
     threads: list[threading.Thread] = []
@@ -258,13 +276,18 @@ def blockize_video(path: str = "input.mp4", block_size: tuple[int, int] = (70, 5
 
     video_bar = create_bar("Overall frames", int(
         frame_count), position=thread_count)
+    
+    error: Exception | None = None
 
     while cap.isOpened():
         video_bar.refresh()
+        if error is not None:
+            break
         ret, frame = cap.read()
         if not ret:
             break
-        if os.path.exists("res"+os.sep+f"{index}.png"):
+        frame_path = ctx.frames_folder / f"{index}.png"
+        if frame_path.is_file():
             index += 1
             video_bar.update()
             continue
@@ -290,13 +313,17 @@ def blockize_video(path: str = "input.mp4", block_size: tuple[int, int] = (70, 5
         slot_index += 1
 
         def handle(*args, bar_position=None):
-            process_frame(*args, bar_position=bar_position)
+            nonlocal error
+            try:
+                process_frame(*args, bar_position=bar_position)
+            except Exception as e:
+                error = e
             video_bar.update()
 
         t = threading.Thread(
             name=f"Frame {index}",
             target=handle,
-            args=(sorted_textures, frame, index, block_size),
+            args=(sorted_textures, frame, ctx, index),
             kwargs={"bar_position": current_slot}
         )
         t.start()
@@ -313,35 +340,63 @@ def blockize_video(path: str = "input.mp4", block_size: tuple[int, int] = (70, 5
     frame_bars.clear()
     video_bar.close()
 
-    out_name = ".".join(path.split(".")[:-1])+f"_{block_size[0]}x{block_size[1]}_output."+output_ext
-    make_video(result_fps, block_size, output_name=out_name)
+    if error is not None:
+        raise RuntimeError("Exception processing video") from error
+
+    block_size = ctx.block_size
+
+    out_name = video_path.stem+f"_{block_size[0]}x{block_size[1]}_output."+output_ext
+    out_path = ctx.results_folder / out_name
+    make_video(result_fps, ctx, out_path)
 
 
 thread_count = 5
 
-def main():
+
+@click.command()
+@click.option(
+    "--input", "-i",
+    type=click.Path(exists=True, path_type=Path),
+    default=Path("input.mp4"),
+    help="Input file name (default: input.mp4). Must be .mp4 or .png"
+)
+@click.option(
+    "--size", "-s",
+    type=str,
+    help="Specify size as a string in format {width}x{height}"
+)
+@click.option(
+    "--range", "-r",
+    default="0..",
+    type=str,
+    help="Specify frames indexes to process from video in format {from}..{to} "
+         "(all inclusive)(default is 0..). Examples: ..5 (from 0 to five), 3.. (from 3 to end), 2..6 (from 2 to 6)"
+)
+@click.option(
+    "--ext", "-e",
+    type=click.Choice(["avi", "mp4", "gif"]),
+    default="avi",
+    help="Specify output video extension"
+)
+@click.option(
+    "--threads", "-tc",
+    type=int,
+    default=5,
+    help="Thread count. Default is 5"
+)
+@click.option(
+    "--name", "-n",
+    type=str,
+    default="main",
+    help="Project name. Used to have separate folders. Default is main"
+)
+def main(input: Path, size: str, range: str, ext: str, threads: int, name: str):
     global thread_count
-    parser = argparse.ArgumentParser(description="Convert image or video to minecraft blocks image")
-    parser.add_argument("--input", "-i", type=str, default="input.mp4", help="Input file name (default: input.mp4). Must be .mp4 or .png")
-    parser.add_argument("--size", "-s", type=str, help="Specify size as a string in format {width}x{height}")
-    parser.add_argument("--range", "-r", default="0..", type=str, help="Specify frames indexes to process from video in format {from}..{to} (all inclusive)(default is 0..). Examples: ..5 (from 0 to five), 3.. (from 3 to end), 2..6 (from 2 to 6)")
-    parser.add_argument("--ext", "-e", choices=["avi", "mp4", "gif"], default="avi", help="Specify output video extension")
-    parser.add_argument("--threads", "-tc", type=int, help="Thread count. Default is 5", default=5)
-    parser.add_argument("--name", "-n", type=str, help="Project name. Used to have separate folders. WIP", default="main")
+    thread_count = threads
 
-    args: argparse.Namespace = parser.parse_args()
-    thread_count = args.threads
-
-    path: str = args.input
-    if not os.path.exists(path):
-        print("Unknown file "+path)
+    if not input.is_file():
+        click.echo("Unknown file "+input)
         return
-    size: str = args.size
-    if size != None:
-        if "x" not in size or len(size) < 3 or size.count("x") > 1:
-            print(f"\"{size}\" is not valid size")
-            parser.print_help()
-            return
     if size != None:
         try:
             ls = size.split("x")
@@ -349,50 +404,52 @@ def main():
             h = int(ls[1])
             content_size = (w, h)
         except:
-            print(f"\"{size}\" is not valid size")
-            parser.print_help()
+            click.echo(f"\"{size}\" is not valid size")
             return
 
     input_type = -1
-    if path.endswith(".png"):
+    input_ext = input.suffix
+    if input_ext == ".png":
         input_type = 1
         if size == None:
-            img: np.ndarray = cv2.imread(path)
+            img: np.ndarray = cv2.imread(str(input))
             content_size: tuple[int, int] = img.shape[:2]
             del img
-    elif path.endswith(".mp4"):
+    elif input_ext == ".mp4":
         input_type = 2
         if size == None:
-            vid = cv2.VideoCapture(path)
+            vid = cv2.VideoCapture(str(input))
             w: int = vid.get(cv2.CAP_PROP_FRAME_WIDTH)
             h: int = vid.get(cv2.CAP_PROP_FRAME_HEIGHT)
             vid.release()
             content_size = (w, h)
     else:
-        print("Unknown format: ."+path.split(".")[-1])
-        parser.print_help()
+        click.echo("Unknown format: "+input.suffix)
         return
     
-    if not os.path.exists("res"):
-        os.mkdir("res")
+    results_dir = Path("res") / name
+    results_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Resolved block size: {content_size}")
+    context = Context(results_folder=results_dir, block_size=content_size)
+    print(f"Results folder: {results_dir}")
+
     load_textures()
     loadcache()
     
     if input_type == 1:
-        blockize_image(path, content_size)
+        blockize_image(context, input)
     elif input_type == 2:
         try:
-            frame_range = FrameRange.parse(args.range)
+            frame_range = FrameRange.parse(range)
         except Exception as e:
-            print(f"Failed to parse frame range \"{args.range}\"")
-            parser.print_help()
+            click.echo(f"Failed to parse frame range \"{range}\"")
             return
-        blockize_video(path, content_size, frame_range, output_ext=args.ext)
+        blockize_video(input, context, frame_range, output_ext=ext)
     else:
-        print("Unknown type: ."+path.split(".")[-1])
-        parser.print_help()
+        click.echo("Unknown type: "+input.suffix)
         return
     savecache()
+    print(f"Results folder: {results_dir}")
 
 if __name__ == "__main__":
     main()
