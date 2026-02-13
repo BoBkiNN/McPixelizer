@@ -327,6 +327,7 @@ def main():
     parser.add_argument("--range", "-r", default="0..", type=str, help="Specify frames indexes to process from video in format {from}..{to} (all inclusive)(default is 0..). Examples: ..5 (from 0 to five), 3.. (from 3 to end), 2..6 (from 2 to 6)")
     parser.add_argument("--ext", "-e", choices=["avi", "mp4", "gif"], default="avi", help="Specify output video extension")
     parser.add_argument("--threads", "-tc", type=int, help="Thread count. Default is 5", default=5)
+    parser.add_argument("--name", "-n", type=str, help="Project name. Used to have separate folders. WIP", default="main")
 
     args: argparse.Namespace = parser.parse_args()
     thread_count = args.threads
