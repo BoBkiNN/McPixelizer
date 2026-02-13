@@ -10,8 +10,10 @@ import numpy as np
 # from nbtlib import *
 from tqdm import tqdm
 
-def create_bar(name: str, max: int):
-    return tqdm(total=max, ncols=100, bar_format='{desc} |{bar}| {n_fmt}/{total_fmt}; ETA: {remaining}; {elapsed}', desc=name)
+def create_bar(name: str, max: int, position: int | None = None):
+    return tqdm(total=max, ncols=100, 
+                bar_format='{desc} |{bar}| {n_fmt}/{total_fmt}; ETA: {remaining}; {elapsed}', 
+                desc=name, position=position)
 
 texture_path = 'textures'
 color_map = {}
@@ -103,12 +105,12 @@ def preload_sorted():
 def process_frame(sorted_textures: dict[str, np.ndarray], 
                   image: np.ndarray, index: int = 0,
                   block_size: tuple[int, int] = (70, 50), 
-                  output_name: str = None):
+                  output_name: str = None, bar_position: int | None = None):
     # Resize frame
     resized_frame = cv2.resize(image, block_size)
     # print(f"{len(resized_frame)}, {len(resized_frame[0])}")
     # ret = np.zeros((SIZE[0], SIZE[1], 3), dtype=np.uint8)
-    bar = create_bar(f'Frame {index}', block_size[1]*block_size[0])
+    bar = create_bar(f'Frame {index}', block_size[1]*block_size[0], position=bar_position)
     frame_bars.append(bar)
     # bar = IncrementalBar(f'Frame {index}', max = block_size[1]*block_size[0], suffix='%(index)d/%(max)d; ETA: %(eta_td)s; %(elapsed_td)s')
     blocked = np.zeros((block_size[1]*16, block_size[0]*16, 3), dtype=np.uint8) # 800 1120 3
@@ -247,34 +249,61 @@ def blockize_video(path: str = "input.mp4", block_size: tuple[int, int] = (70, 5
         result_fps = (result_frame_count * fps) / frame_count
     print(f"Processing video \"{path}\"; FPS {result_fps}; Total frames: {int(result_frame_count)}|{int(frame_count)}")
     sorted_textures = preload_sorted()
+
     threads: list[threading.Thread] = []
     index = 0
+    slot_index = 0
+
+    tqdm.set_lock(threading.RLock())
+
+    video_bar = create_bar("Overall frames", int(
+        frame_count), position=thread_count)
+
     while cap.isOpened():
+        video_bar.refresh()
         ret, frame = cap.read()
         if not ret:
             break
-        # t = threading.Thread(name=f"F{index}", target=blockize_image, args=(frame, index))
-        # t.start()
         if os.path.exists("res"+os.sep+f"{index}.png"):
             index += 1
+            video_bar.update()
             continue
         if not frame_range.inrange(index):
             writedebug(f"not in range {index}")
             index += 1
+            video_bar.update()
             continue
         if len(threads) >= thread_count:
+            # Wait for batch to finish
             while any(t.is_alive() for t in threads):
                 time.sleep(0.001)
-            threads.clear()
+
+            # Close frame bars
             for bar in frame_bars:
                 bar.close()
             frame_bars.clear()
-        t = threading.Thread(name=f"Frame {index}", target=process_frame, args=(sorted_textures, frame, index, block_size))
+            threads.clear()
+            slot_index = 0
+
+        # Assign slot position for frame bar
+        current_slot = slot_index
+        slot_index += 1
+
+        def handle(*args, bar_position=None):
+            process_frame(*args, bar_position=bar_position)
+            video_bar.update()
+
+        t = threading.Thread(
+            name=f"Frame {index}",
+            target=handle,
+            args=(sorted_textures, frame, index, block_size),
+            kwargs={"bar_position": current_slot}
+        )
         t.start()
         threads.append(t)
-        # process_frame(frame, index, block_size)
-        # print("")
+
         index += 1
+
     cap.release()
     while any(t.is_alive() for t in threads):
         time.sleep(0.001)
@@ -282,9 +311,11 @@ def blockize_video(path: str = "input.mp4", block_size: tuple[int, int] = (70, 5
     for bar in frame_bars:
         bar.close()
     frame_bars.clear()
-    # print("")
+    video_bar.close()
+
     out_name = ".".join(path.split(".")[:-1])+f"_{block_size[0]}x{block_size[1]}_output."+output_ext
     make_video(result_fps, block_size, output_name=out_name)
+
 
 thread_count = 5
 
